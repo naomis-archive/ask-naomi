@@ -1,6 +1,15 @@
-import { Client, Events, GatewayIntentBits } from "discord.js";
+import {
+  ActionRowBuilder,
+  Client,
+  Events,
+  GatewayIntentBits,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+} from "discord.js";
 
 import { ExtendedClient } from "./interfaces/ExtendedClient";
+import { processQuestionModal } from "./modules/processQuestionModal";
 import { errorHandler } from "./utils/errorHandler";
 import { loadCommands } from "./utils/loadCommands";
 import { logHandler } from "./utils/logHandler";
@@ -18,24 +27,92 @@ import { validateEnv } from "./utils/validateEnv";
 
     bot.on(Events.InteractionCreate, async (interaction) => {
       try {
-        if (!interaction.isChatInputCommand()) {
-          return;
+        if (interaction.isChatInputCommand()) {
+          if (!isGuildCommandCommand(interaction)) {
+            await interaction.reply({
+              content: "You can only run this in a guild.",
+              ephemeral: true,
+            });
+            return;
+          }
+          const target = bot.commands.find(
+            (c) => c.data.name === interaction.commandName
+          );
+          if (!target) {
+            await interaction.reply({
+              content: "Command not found.",
+              ephemeral: true,
+            });
+            return;
+          }
+          await target.run(bot, interaction);
         }
-        await interaction.deferReply();
-        if (!isGuildCommandCommand(interaction)) {
-          await interaction.editReply({
-            content: "You can only run this in a guild.",
-          });
-          return;
+        if (interaction.isModalSubmit()) {
+          if (interaction.customId === "ask") {
+            await processQuestionModal(bot, interaction);
+          }
+          if (interaction.customId === "answer") {
+            await interaction.deferReply({
+              ephemeral: true,
+            });
+            if (!interaction.message) {
+              await interaction.editReply({
+                content: "Something went wrong. Please try again.",
+              });
+              return;
+            }
+            const answer = interaction.fields.getTextInputValue("answer");
+            await interaction.message.edit({
+              content: `**${interaction.message.content
+                .split("\n")
+                .slice(-1)}**\n\n${answer}`,
+              components: [],
+            });
+            await interaction.editReply({
+              content: "Your answer has been submitted.",
+            });
+          }
         }
-        const target = bot.commands.find(
-          (c) => c.data.name === interaction.commandName
-        );
-        if (!target) {
-          await interaction.editReply({ content: "Command not found." });
-          return;
+        if (interaction.isButton()) {
+          if (
+            !["710195136700874893", "465650873650118659"].includes(
+              interaction.user.id
+            )
+          ) {
+            await interaction.reply({
+              content: "Only Naomi can click these buttons.",
+              ephemeral: true,
+            });
+            return;
+          }
+          if (interaction.customId === "answer") {
+            const input = new TextInputBuilder()
+              .setCustomId("answer")
+              .setLabel("How do you answer?")
+              .setMaxLength(2000)
+              .setRequired(true)
+              .setStyle(TextInputStyle.Paragraph);
+            const row = new ActionRowBuilder<TextInputBuilder>().addComponents(
+              input
+            );
+            const modal = new ModalBuilder()
+              .setCustomId("answer")
+              .setTitle("Answer Question")
+              .addComponents(row);
+            await interaction.showModal(modal);
+          }
+          if (interaction.customId.startsWith("delete-")) {
+            await interaction.deferReply({ ephemeral: true });
+            const id = interaction.customId.split("-")[1];
+            await interaction.message.edit({
+              content: `This message has been flagged for violating our community guidelines.`,
+              components: [],
+            });
+            await interaction.editReply({
+              content: `For moderation purposes, that question was asked by <@!${id}> (${id}).`,
+            });
+          }
         }
-        await target.run(bot, interaction);
       } catch (err) {
         await errorHandler(bot, "interaction create event", err);
       }
